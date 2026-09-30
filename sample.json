@@ -1,0 +1,64 @@
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "total": 25,
+    "merged_by_type": {
+      "quark": [
+        {
+          "url": "https://pan.quark.cn/s/5bf74b0e4ffd",
+          "password": "",
+          "note": "速度与激情5",
+          "datetime": "0001-01-01T00:00:00Z",
+          "source": "plugin:wanou",
+          "images": [
+            "https://woog.430520.xyz/t/?id=1&url=xinlangtupian.com/cover/0a49e3c3a03ebde64f85c0bacd8a08e2.jpg"
+          ]
+        },
+        {
+          "url": "https://pan.quark.cn/s/868458b0822a",
+          "password": "",
+          "note": "速度与激情10",
+          "datetime": "0001-01-01T00:00:00Z",
+          "source": "plugin:wanou",
+          "images": [
+            "https://img.liangzipic.com/upload/vod/20230518-1/87fa923da8ccd50b93948b868f6bf9e0.jpg"
+          ]
+        },
+        {
+          "url": "https://pan.quark.cn/s/c3e48933d21f",
+          "password": "",
+          "note": "速度与激情2",
+          "datetime": "0001-01-01T00:00:00Z",
+          "source": "plugin:wanou",
+          "images": [
+            "https://woog.430520.xyz/t/?id=1&url=xinlangtupian.com/cover/8a6cb96eabdd2be1fe1e8bf4043d385f.jpg"
+          ]
+        }
+      ],
+      "magnet": [
+        {
+          "url": "magnet:?xt=urn:btih:7A4C9DCFE1C106A9CCCC7A33126061CAD81815A8",
+          "password": "",
+          "note": "速度与激情5-Fast.Five.2011.1080p.BluRay.x264-iNFAMOUS",
+          "datetime": "2022-12-13T00:00:00Z",
+          "source": "plugin:clxiong"
+        },
+        {
+          "url": "magnet:?xt=urn:btih:B212DBB148D06194699E30457A2FE23A051A6CDD",
+          "password": "",
+          "note": "速度与激情6-Fast.&.Furious.6.2013.1080p.BluRay.DDP.5.1.H.265-EDGE2020.mkv[3.2G]",
+          "datetime": "2025-05-24T00:00:00Z",
+          "source": "plugin:clxiong"
+        },
+        {
+          "url": "magnet:?xt=urn:btih:6756D451B9D3D1E7AB1ECEFB52C06C0A6D2B2DCC",
+          "password": "",
+          "note": "速度与激情5-Fast.And.Furious.5.2011.1080p.BluRay.H264.AAC-RARBG",
+          "datetime": "2022-12-13T00:00:00Z",
+          "source": "plugin:clxiong"
+        }
+      ]
+    }
+  }
+}
