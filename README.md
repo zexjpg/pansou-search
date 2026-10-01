@@ -4,7 +4,7 @@
 以 Tampermonkey 油猴脚本形式运行，注入任意网页，用 `GM_xmlhttpRequest` 跨域直连 PanSou 后端，
 把各网盘（百度/阿里/夸克/115/天翼/迅雷/123/磁力等）的分享链接、提取码、来源聚合并分组展示。
 
-> 当前版本：**v0.2.7** · 协议：MIT · 仅供学习研究，请勿用于盈利。
+> 当前版本：**v0.2.10** · 协议：MIT · 仅供学习研究，请勿用于盈利。
 >
 > - 本仓库（[zexjpg/pansou-search](https://github.com/zexjpg/pansou-search)）独立托管这份脚本，与后端仓库 [fish2018/pansou](https://github.com/fish2018/pansou) 分离。
 > - 一键安装：Tampermonkey 面板 → 实用工具 →「**从 URL 安装脚本**」→ `https://github.com/zexjpg/pansou-search/raw/main/pansou-search.user.js`
@@ -22,16 +22,17 @@
 
 ```
 pansou-search/
-├── pansou-search.user.js   # 主脚本（单文件，含 UI/CSS/逻辑，约 1278 行）
+├── pansou-search.user.js   # 主脚本（单文件，含 UI/CSS/逻辑，约 1400 行）
 ├── sample.json             # 真实搜索响应裁剪样本（字段参考用）
 ├── test-parse.mjs          # Node 校验脚本（离线验证解析/分组/映射逻辑，16 项断言）
+├── test-launcher.mjs       # 触发条冒烟测试（桩 DOM 跑默认形态/点击/拖拽吸附/视口回夹，25 项断言）
 ├── LICENSE                 # MIT
 ├── .gitignore              # 忽略 .DS_Store / node_modules 等
 └── README.md               # 本文件
 ```
 
 > 单文件油猴脚本是刻意设计：方便直接粘进 Tampermonkey 覆盖保存，无需构建步骤。
-> 语法自检：`node --check pansou-search.user.js`（应无输出）；纯逻辑回归：`node test-parse.mjs`。
+> 语法自检：`node --check pansou-search.user.js`（应无输出）；逻辑回归：`node test-parse.mjs`；触发条回归：`node test-launcher.mjs`。
 
 ### 2.1 与后端仓库的关系
 
@@ -122,8 +123,11 @@ baseUrl 默认 `https://so.252035.xyz`（设置里可改）。所有路径拼在
 1. 浏览器装好 Tampermonkey 扩展。
 2. Tampermonkey → 新建脚本 → 把 `pansou-search.user.js` 全部内容粘进去 → 保存。
 3. 任意 `http/https` 网页：
-   - 顶部居中会出现蓝色小标签「🔍 PanSou 搜索」，点击弹出搜索框（移动端常显、字号放大）。
-   - 若关闭了触发条，仍可点 **Tampermonkey 扩展图标 → 脚本名 → 命令菜单** 调出「打开 PanSou 搜索框」或「显示/隐藏顶部触发条」。
+   - 视口**右上角**会出现蓝色小球（默认贴顶，只露下半个圆，44×22），鼠标停在它上面会鼓成整球 44×44，点击弹出搜索框。
+   - 可以**按住拖动**：把球拖到页面左半边松手 → 缩回半圆吸附在左边缘；拖到右半边松手 → 吸附在右边缘；位置会被记住。想回到右上角，用命令菜单的「重置触发条位置」。
+   - 拖拽与点击不会互相干扰：**按下不动（位移 ≤ 6px）= 点击开面板；移动超过 6px = 拖拽**。
+   - 移动端（触屏无 hover）常驻显示 44×44 整球，保证点按区并避开刘海安全区。
+   - 若关闭了触发条，仍可点 **Tampermonkey 扩展图标 → 脚本名 → 命令菜单** 调出「打开 PanSou 搜索框」「显示/隐藏触发条」「重置触发条位置」。
 4. 输入关键词回车/点搜索即可。
 
 > 演示站有 Nginx 限流（约 60 次/分钟），高频搜索可能 429。长期自用建议自建 PanSou 后端，设置里填你的域名即可（已 `@connect *` 放行所有域名）。
@@ -139,6 +143,7 @@ baseUrl 默认 `https://so.252035.xyz`（设置里可改）。所有路径拼在
 - 搜索历史下拉（最近 10 个，点选即搜，✕ 联动删缓存）
 - 结果导出为 Markdown（当前标签或全部）
 - 本地结果缓存（72 小时，命中秒显；错误与空结果不缓存）
+- **触发条**：右上角贴顶半球（默认只露下半球，hover 鼓成整球、点击弹面板），可按住拖到左/右边缘就近吸附并记住位置
 - 设置：后端地址、显示触发条开关、清空缓存
 - 移动端适配（媒体查询，触屏常显、安全区、字号）
 
@@ -147,7 +152,8 @@ baseUrl 默认 `https://so.252035.xyz`（设置里可改）。所有路径拼在
 | 键 | 说明 | 读取/写入位置 |
 |----|------|--------------|
 | `pansou_base` | 后端地址，缺省协议自动补 `https://` | `cfg.baseUrl` getter/setter（含 `normalizeBase`） |
-| `pansou_show_launcher` | 是否显示顶部触发条，默认 `true` | `applyLauncherVisibility()` / 设置开关 |
+| `pansou_show_launcher` | 是否显示触发条，默认 `true` | `applyLauncherVisibility()` / 设置开关 |
+| `pansou_launcher_dock` | 触发条吸附位置 `{dock:'top'\|'left'\|'right', top:px}`，缺省 `{dock:'top',top:0}`（`LAUNCHER_TOP_DEF`） | `loadLauncherPos()` / `saveLauncherPos()` / `applyLauncherPos()` |
 | `pansou_history` | 搜索历史数组（最多 10） | `loadHistory()` / `saveHistory()` |
 | `pansou_cache::<kw>::<types>::<inc>::<exc>` | 结果缓存，TTL 72h | `cacheKey()` / `getCache()` / `setCache()` |
 
@@ -163,13 +169,24 @@ baseUrl 默认 `https://so.252035.xyz`（设置里可改）。所有路径拼在
 | 1. 配置 | 23–45 | `DEFAULT_BASE`、`CLOUD_TYPES`、`CLOUD_LABELS`、`normalizeBase`、`cfg` |
 | 2. 工具 | 47–118 | `$/$$`、`esc`、`fmtDate`、`friendlyError`(错误转中文)、`copyText/fallbackCopy`、`toast` |
 | 3. API | 120–198 | `gmRequest`(GM_xmlhttpRequest 封装)、`parseJson`、`apiHealth`、`apiSearch`、`apiCheckLinks` |
-| 4. 状态&UI | 200–368 | 全局状态、`buildLauncher`/`applyLauncherVisibility`/`toggleLauncher`、`buildPanel`(HTML 骨架+事件绑定)、`openPanel`/`closePanel`、`setStatus` |
-| 5. 搜索/渲染 | 370–551 | `getSelectedTypes`、`doSearch`、`renderResults`、`showType`、`makeTypeSection`、`makeCard` |
-| 5b. 缓存/历史/导出 | 553–678 | `cacheKey/getCache/setCache/fmtAgo`、`loadHistory/saveHistory/pruneCache/deleteHistoryAndCache/clearAllCache/updateCacheCount`、`renderHistory/showHistory/hideHistory`、`exportResults` |
-| 6. 链接检测 | 680–730 | `stateLabel`、`checkLinks` |
-| 7. 设置 | 732–755 | `saveSettings` |
-| 8. 样式 | 760–906 | `GM_addStyle` 全部 CSS（含移动端 `@media`） |
-| 9. 启动 | 908–922 | `applyLauncherVisibility`、注册 `GM_registerMenuCommand`、暴露 `window.__panSou` |
+| 4. 状态&UI | 309–644 | 全局状态、`buildLauncher`/`applyLauncherVisibility`/`toggleLauncher`、`applyLauncherPos`/`resetLauncherPos`/`attachLauncherDrag`(拖拽吸附，6px 阈值)、`buildPanel`(HTML 骨架+事件绑定)、`openPanel`/`closePanel`、`setStatus` |
+| 5. 搜索/渲染 | 645–828 | `getSelectedTypes`、`doSearch`、`renderResults`、`showType`、`makeTypeSection`、`makeCard` |
+| 5b. 缓存/历史/导出 | 829–955 | `cacheKey/getCache/setCache/fmtAgo`、`loadHistory/saveHistory/pruneCache/deleteHistoryAndCache/clearAllCache/updateCacheCount`、`renderHistory/showHistory/hideHistory`、`exportResults` |
+| 6. 链接检测 | 956–1007 | `stateLabel`、`checkLinks` |
+| 7. 设置 | 1008–1099 | `saveSettings` |
+| 7b. 多后端 | 1100–1194 | `loadProfiles/saveProfiles/getActiveProfile/setActiveField`、`renderProfiles` |
+| 8. 样式 | 1195–1389 | `GM_addStyle` 全部 CSS（`#ps-launcher` 的三态 dock 类 + 移动端 `@media`） |
+| 9. 启动 | 1391–1406 | `applyLauncherVisibility`、注册 `GM_registerMenuCommand`、暴露 `window.__panSou` |
+
+触发条形态速查（区块 8 的 CSS 与区块 4 的 `launcherPos` 一一对应）：
+
+| dock class | 位置 | 半球态 | hover / 展开态 |
+|------------|------|--------|----------------|
+| `.ps-dock-top` | `top:0; right:0`（只露下半个圆） | 44×22，`border-radius:0 0 22px 22px` | `height:44` + 全圆 → 整球下移凸出 |
+| `.ps-dock-left` | `left:0`，`top` 由 JS 存 | 22×44，`border-radius:0 22px 22px 0` | `width:44` + 全圆 → 鼓向页面内 |
+| `.ps-dock-right` | `right:0`，`top` 由 JS 存 | 22×44，`border-radius:22px 0 0 22px` | `width:44` + 全圆 → 鼓向页面内 |
+
+规律：贴边方向的两角保持直角，朝页面内侧的两角圆化 22px；hover 时四角全圆化 = 整球。拖拽中挂 `.ps-floating`(44×44) + `.ps-dragging`(禁用位移动画)，松手后按落点水平中线判定 dock。
 
 **调试入口**：控制台执行 `window.__panSou.apiSearch(...)` 可直接调 API。
 
@@ -322,6 +339,9 @@ pansou-windows-amd64.exe        # 111 插件 + 111 频道
 
 | 版本 | 关键变化 |
 |------|----------|
+| 0.2.10 | 结果卡「打开↗」（`<a>`）字体在暗色主题站点上被宿主 `a{color:#fff}` 刷成白字看不清 → 新增 `.ps-actions .ps-open{color:#4169e1 !important}`（含 `:visited`）提权，与复制按钮同色 |
+| 0.2.9 | 触发条位置状态重构：缺省 / 重置 / 读档兜底统一走常量 `LAUNCHER_TOP_DEF`（**当前默认仍是贴顶 `top:0`、只露下半球**，想改默认位置只改这一个常量即可） |
+| 0.2.8 | 触发条从「顶部居中横条」改为「右上角贴边半球」：hover 鼓成整球、点击弹搜索框；新增可拖拽就近吸附左/右边缘（位移 ≤6px 判点击、>6px 判拖拽），位置记入 `pansou_launcher_dock`，菜单加「重置触发条位置」 |
 | 0.2.6 | 认证支持（JWT 自动登录/手动令牌）、设置面板、导出 Markdown |
 | 0.2.7 | 脚本头部 `@version` 与文档对齐；后端「开箱即全量」默认行为落地；本说明补齐自建后端/代理/排错章节 |
 

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PanSou 网盘搜索
 // @namespace    https://github.com/fish2018/pansou
-// @version      0.2.7
+// @version      0.2.10
 // @description  基于 PanSou 后端 API 的网盘资源搜索展示前端。默认连接演示站 so.252035.xyz，可在设置中改为自建后端。支持按网盘类型分组、关键词过滤、链接有效性检测。仅供学习研究，请勿用于盈利。
 // @author       WorkBuddy
 // @match        *://*/*
@@ -315,13 +315,116 @@
   let history = [];             // 搜索历史关键词
   const CACHE_TTL = 72 * 60 * 60 * 1000; // 本地缓存有效期：72 小时，超期后再次搜索走远程刷新
 
+  /* ---- 触发条位置：默认贴视口右上角（只露下半球），可拖拽到左/右边缘吸附成竖立半球 ---- */
+  const LAUNCHER_TOP_DEF = 0;                     // 默认贴顶：只露出下半个圆（0.2.8 形态）
+  const DRAG_THRESHOLD = 6;                       // 位移超过 6px 才算拖拽，否则视为点击
+  const LAUNCHER_DEF = { dock: 'top', top: LAUNCHER_TOP_DEF };   // {dock:'top'|'left'|'right', top:px}
+  let launcherPos = LAUNCHER_DEF;
+  let suppressLauncherClick = false;              // 吞掉拖拽结束时浏览器补发的 click
+
+  function loadLauncherPos() {
+    try {
+      const v = GM_getValue('pansou_launcher_dock', '');
+      const o = v ? JSON.parse(v) : null;
+      if (o && (o.dock === 'left' || o.dock === 'right' || o.dock === 'top')) {
+        return { dock: o.dock, top: Number(o.top) || 0 };
+      }
+    } catch (e) {}
+    return { dock: 'top', top: LAUNCHER_TOP_DEF };
+  }
+  function saveLauncherPos() {
+    try { GM_setValue('pansou_launcher_dock', JSON.stringify(launcherPos)); } catch (e) {}
+  }
+  function clampTop(v) {
+    const vh = window.innerHeight || 800;
+    return Math.min(Math.max(Number(v) || 0, 12), Math.max(12, vh - 56));
+  }
+  function applyLauncherPos() {
+    const el = $('#ps-launcher');
+    if (!el) return;
+    el.classList.remove('ps-dock-top', 'ps-dock-left', 'ps-dock-right');
+    el.style.top = ''; el.style.left = ''; el.style.right = '';
+    if (launcherPos.dock === 'top') {
+      el.classList.add('ps-dock-top');                   // 位置由 CSS 的 .ps-dock-top{top:0} 决定，仅露下半球
+    } else {
+      el.classList.add('ps-dock-' + launcherPos.dock);
+      el.style.top = clampTop(launcherPos.top) + 'px';
+      el.style[launcherPos.dock] = '0';            // left 或 right 贴边
+    }
+  }
+  function resetLauncherPos() {
+    launcherPos = { dock: 'top', top: LAUNCHER_TOP_DEF };
+    saveLauncherPos();
+    applyLauncherPos();
+    toast('已重置触发条位置');
+  }
+
+  // 拖拽与点击互不干扰：位移 <= 6px 视为点击（开面板），> 6px 进入拖拽，松手就近吸附边缘
+  function attachLauncherDrag(el) {
+    el.addEventListener('click', () => {
+      if (suppressLauncherClick) { suppressLauncherClick = false; return; }
+      openPanel();
+    });
+    el.addEventListener('pointerdown', (e) => {
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      suppressLauncherClick = false;
+      // 记录「抓取点」而不是元素左上角：后续只按相对位移算，不受 dock/半球尺寸变化影响
+      const r = el.getBoundingClientRect();
+      const rec = {
+        id: e.pointerId, sx: e.clientX, sy: e.clientY,
+        cx: r.left + r.width / 2, cy: r.top + r.height / 2,   // 按下瞬间的元素中心
+        w: 44, h: 44, curLeft: r.left, curTop: r.top
+      };
+      let dragging = false;
+      try { el.setPointerCapture(e.pointerId); } catch (err) {}
+      el.classList.add('ps-grabbing');
+
+      function onMove(ev) {
+        if (ev.pointerId !== rec.id) return;
+        const dx = ev.clientX - rec.sx, dy = ev.clientY - rec.sy;
+        if (!dragging) {
+          if (Math.sqrt(dx * dx + dy * dy) <= DRAG_THRESHOLD) return;  // 还没到阈值，继续等
+          dragging = true;
+          el.classList.remove('ps-grabbing');
+          el.classList.remove('ps-dock-top', 'ps-dock-left', 'ps-dock-right'); // 回到自由态
+          el.classList.add('ps-dragging', 'ps-floating');
+        }
+        rec.curLeft = Math.min(Math.max(rec.cx + dx - rec.w / 2, 0), window.innerWidth - rec.w);
+        rec.curTop = Math.min(Math.max(rec.cy + dy - rec.h / 2, 0), window.innerHeight - rec.h);
+        el.style.right = '';
+        el.style.left = rec.curLeft + 'px';
+        el.style.top = rec.curTop + 'px';
+      }
+      function onUp(ev) {
+        if (ev.pointerId !== rec.id) return;
+        el.removeEventListener('pointermove', onMove);
+        el.removeEventListener('pointerup', onUp);
+        el.removeEventListener('pointercancel', onUp);
+        el.classList.remove('ps-grabbing', 'ps-dragging', 'ps-floating');
+        if (!dragging) return;                      // 纯点击：交给上面的 click 打开面板
+        suppressLauncherClick = true;               // 吞掉拖拽尾随的 click
+        const centerX = rec.curLeft + rec.w / 2;
+        const dock = centerX < window.innerWidth / 2 ? 'left' : 'right';
+        launcherPos = { dock: dock, top: rec.curTop };
+        saveLauncherPos();
+        applyLauncherPos();                         // 带过渡回弹到吸附位置
+      }
+      el.addEventListener('pointermove', onMove);
+      el.addEventListener('pointerup', onUp);
+      el.addEventListener('pointercancel', onUp);
+    });
+  }
+
   function buildLauncher() {
     const btn = document.createElement('div');
     btn.id = 'ps-launcher';
     btn.title = 'PanSou 网盘搜索（点击展开）';
-    btn.innerHTML = '<span class="ps-launch-ico">🔍</span><span class="ps-launch-label">PanSou 搜索</span>';
-    btn.addEventListener('click', openPanel);
+    btn.innerHTML = '<span class="ps-launch-ico">🔍</span>';
+    btn.draggable = false;
+    launcherPos = loadLauncherPos();
     document.body.appendChild(btn);
+    applyLauncherPos();                            // 先落位，再挂事件（避免拖到一半被 hover 变形影响 rect）
+    attachLauncherDrag(btn);
   }
 
   function applyLauncherVisibility() {
@@ -330,6 +433,13 @@
     if (show) { if (!existing) buildLauncher(); }
     else if (existing) { existing.remove(); }
   }
+
+  // 视口变化后把吸附位置夹回可视范围内
+  window.addEventListener('resize', () => {
+    if (launcherPos.dock === 'top') return;
+    launcherPos.top = clampTop(launcherPos.top);
+    applyLauncherPos();
+  });
 
   function toggleLauncher() {
     const next = !GM_getValue('pansou_show_launcher', true);
@@ -396,7 +506,7 @@
           <div class="ps-settings-row">
             <button id="ps-btn-del-profile" class="ps-danger">删除此后端</button>
           </div>
-          <label class="ps-setting-toggle"><input type="checkbox" id="ps-show-launcher" checked> 显示顶部触发条（取消后可通过 Tampermonkey 菜单 / 命令弹出搜索框）</label>
+          <label class="ps-setting-toggle"><input type="checkbox" id="ps-show-launcher" checked> 显示触发条（右上角贴边半球；可拖到左/右边缘吸附。取消后可通过 Tampermonkey 菜单 / 命令弹出搜索框）</label>
           <div class="ps-settings-row">
             <button id="ps-btn-clear-cache" class="ps-secondary">清空本地缓存</button>
             <span id="ps-cache-msg" class="ps-settings-msg"></span>
@@ -1085,16 +1195,27 @@
    * 8. 样式
    * ============================================================ */
   GM_addStyle(`
-    #ps-launcher{position:fixed;top:0;left:50%;transform:translateX(-50%);z-index:2147483646;cursor:pointer;
-      height:20px;min-width:52px;padding:0 16px;display:flex;align-items:center;justify-content:center;gap:4px;
+    /* 触发条：默认贴右上角（半球），hover 鼓成整球；拖拽后吸附左/右边缘变成竖立半球 */
+    #ps-launcher{position:fixed;z-index:2147483646;cursor:pointer;
+      display:flex;align-items:center;justify-content:center;
       background:#4169e1;color:#fff;font:13px/1 "Microsoft YaHei",sans-serif;
-      border-bottom-left-radius:12px;border-bottom-right-radius:12px;
+      user-select:none;-webkit-user-select:none;-webkit-user-drag:none;touch-action:none;
       box-shadow:0 2px 10px rgba(0,0,0,.25);overflow:hidden;white-space:nowrap;
-      transition:height .2s ease,box-shadow .2s ease;}
-    #ps-launcher:hover{height:36px;box-shadow:0 4px 14px rgba(0,0,0,.3);}
-    #ps-launcher .ps-launch-ico{font-size:14px;}
-    .ps-launch-label{opacity:0;transition:opacity .2s ease;font-weight:600;}
-    #ps-launcher:hover .ps-launch-label{opacity:1;}
+      transition:width .22s ease,height .22s ease,border-radius .22s ease,
+                 left .22s ease,right .22s ease,top .22s ease,box-shadow .2s ease;}
+    #ps-launcher:hover{box-shadow:0 6px 18px rgba(65,105,225,.45);}
+    #ps-launcher .ps-launch-ico{font-size:16px;line-height:1;}
+    /* 贴边半球：贴边方向两角直角，朝页面内侧两角圆化 22px */
+    .ps-dock-top{top:0;right:0;width:44px;height:22px;border-radius:0 0 22px 22px;}
+    #ps-dock-top:hover{height:44px;border-radius:22px;}
+    .ps-dock-left{top:0;left:0;width:22px;height:44px;border-radius:0 22px 22px 0;}
+    #ps-dock-left:hover{width:44px;border-radius:22px;}
+    .ps-dock-right{top:0;right:0;width:22px;height:44px;border-radius:22px 0 0 22px;}
+    #ps-dock-right:hover{width:44px;border-radius:22px;}
+    /* 拖拽中：自由跟随指针，不做位置过渡 */
+    .ps-floating{width:44px;height:44px;border-radius:22px;}
+    .ps-grabbing,.ps-dragging{transition:none;cursor:grabbing;}
+    .ps-dragging{box-shadow:0 10px 26px rgba(65,105,225,.5);}
     #ps-backdrop{position:fixed;inset:0;z-index:2147483647;background:rgba(0,0,0,.45);
       display:none;align-items:flex-start;justify-content:center;padding:24px 12px;overflow:auto;}
     #ps-backdrop.ps-open{display:flex;}
@@ -1216,6 +1337,10 @@
     .ps-actions button,.ps-open{padding:4px 9px;border:none;border-radius:5px;cursor:pointer;font-size:12px;
       background:#eaf2ff;color:#4169e1;text-decoration:none;}
     .ps-actions button:hover,.ps-open:hover{background:#d6e4ff;}
+    /* 「打开↗」是 <a>，宿主站点的暗色主题常带 a{color:#fff}（含 !important），
+       会把浅蓝底上的字刷成白色看不清；这里提权拉回与复制按钮一致的蓝字 */
+    .ps-actions .ps-open{color:#4169e1 !important;}
+    .ps-actions .ps-open:visited{color:#4169e1 !important;}   /* 访问过的链接也不许被刷白 */
     .ps-state{font-size:11px;padding:2px 7px;border-radius:9px;margin-left:auto;}
     .ps-state-ok{background:#e3f6e8;color:#1a8a3c;}
     .ps-state-bad{background:#fde2e2;color:#d33;}
@@ -1231,10 +1356,11 @@
 
     /* ===== 移动端适配（窄屏 / 无悬停的触屏设备） ===== */
     @media (max-width:768px), (hover:none) {
-      /* 触发条：触屏无 hover，常显文字并加大点按区、避开刘海 */
-      #ps-launcher{top:env(safe-area-inset-top,0);height:36px;min-width:auto;padding:0 18px;}
-      #ps-launcher:hover{height:36px;}
-      #ps-launcher .ps-launch-label{opacity:1;}
+      /* 触发条：触屏无 hover，常驻展开成 44×44 整球保证点按区、避开刘海 */
+      #ps-launcher{top:env(safe-area-inset-top,0);width:44px;height:44px;border-radius:22px;}
+      #ps-launcher.ps-dock-top{top:env(safe-area-inset-top,0);width:44px;height:44px;border-radius:22px;}
+      #ps-launcher.ps-dock-left,#ps-launcher.ps-dock-right{width:44px;height:44px;border-radius:22px;}
+      .ps-floating{width:44px;height:44px;border-radius:22px;}
       /* 弹窗占满屏宽并让出安全区，移除圆角做成全屏面板 */
       #ps-backdrop{padding:env(safe-area-inset-top,0px) 0 env(safe-area-inset-bottom,0px);}
       #ps-panel{width:100%;border-radius:0;
@@ -1269,10 +1395,12 @@
   // 在 Tampermonkey 脚本菜单中注册命令（点击扩展图标 → 脚本名 → 命令）
   if (typeof GM_registerMenuCommand === 'function') {
     GM_registerMenuCommand('打开 PanSou 搜索框', openPanel);
-    GM_registerMenuCommand('显示/隐藏顶部触发条', toggleLauncher);
+    GM_registerMenuCommand('显示/隐藏触发条', toggleLauncher);
+    GM_registerMenuCommand('重置触发条位置', resetLauncherPos);
   }
 
   // 暴露给控制台调试（可选）
   window.__panSou = { apiHealth, apiSearch, apiCheckLinks, apiLogin, ensureToken, auth, cfg,
-                      loadProfiles, saveProfiles, getActiveProfile, renderProfiles };
+                      loadProfiles, saveProfiles, getActiveProfile, renderProfiles,
+                      resetLauncherPos, applyLauncherPos, openPanel };
 })();
