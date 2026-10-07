@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PanSou 网盘搜索
 // @namespace    https://github.com/fish2018/pansou
-// @version      0.2.10
+// @version      0.2.12
 // @description  基于 PanSou 后端 API 的网盘资源搜索展示前端。默认连接演示站 so.252035.xyz，可在设置中改为自建后端。支持按网盘类型分组、关键词过滤、链接有效性检测。仅供学习研究，请勿用于盈利。
 // @author       WorkBuddy
 // @match        *://*/*
@@ -315,10 +315,16 @@
   let history = [];             // 搜索历史关键词
   const CACHE_TTL = 72 * 60 * 60 * 1000; // 本地缓存有效期：72 小时，超期后再次搜索走远程刷新
 
-  /* ---- 触发条位置：默认贴视口右上角（只露下半球），可拖拽到左/右边缘吸附成竖立半球 ---- */
-  const LAUNCHER_TOP_DEF = 0;                     // 默认贴顶：只露出下半个圆（0.2.8 形态）
+  /* ---- 触发条位置：默认贴视口右边缘、距顶 15%（只露左半球），可拖拽到左/右边缘吸附成竖立半球 ---- */
+  const LAUNCHER_TOP_DEF_RATIO = 0.15;            // 默认距视口顶部 15%（dock:'right' 形态，左半球贴右边缘）
+  function defaultLauncherTop() {                 // 15% 处，随视口高度自适应
+    const vh = window.innerHeight || 800;
+    return Math.round(vh * LAUNCHER_TOP_DEF_RATIO);
+  }
+  const LAUNCHER_SIZE = 25;                       // 整球直径(px)：约等于字体大小再多留一点余量给 🔍
+  const LAUNCHER_HALF = LAUNCHER_SIZE / 2;        // 半球厚度 / 圆角半径
   const DRAG_THRESHOLD = 6;                       // 位移超过 6px 才算拖拽，否则视为点击
-  const LAUNCHER_DEF = { dock: 'top', top: LAUNCHER_TOP_DEF };   // {dock:'top'|'left'|'right', top:px}
+  const LAUNCHER_DEF = { dock: 'right', top: defaultLauncherTop() };   // {dock:'top'|'left'|'right', top:px}
   let launcherPos = LAUNCHER_DEF;
   let suppressLauncherClick = false;              // 吞掉拖拽结束时浏览器补发的 click
 
@@ -330,14 +336,15 @@
         return { dock: o.dock, top: Number(o.top) || 0 };
       }
     } catch (e) {}
-    return { dock: 'top', top: LAUNCHER_TOP_DEF };
+    return { dock: 'right', top: defaultLauncherTop() };
   }
   function saveLauncherPos() {
     try { GM_setValue('pansou_launcher_dock', JSON.stringify(launcherPos)); } catch (e) {}
   }
   function clampTop(v) {
     const vh = window.innerHeight || 800;
-    return Math.min(Math.max(Number(v) || 0, 12), Math.max(12, vh - 56));
+    const pad = LAUNCHER_HALF;                     // 贴边时上下各留半个球，避免被视口裁掉
+    return Math.min(Math.max(Number(v) || 0, pad), Math.max(pad, vh - LAUNCHER_SIZE - pad));
   }
   function applyLauncherPos() {
     const el = $('#ps-launcher');
@@ -345,7 +352,8 @@
     el.classList.remove('ps-dock-top', 'ps-dock-left', 'ps-dock-right');
     el.style.top = ''; el.style.left = ''; el.style.right = '';
     if (launcherPos.dock === 'top') {
-      el.classList.add('ps-dock-top');                   // 位置由 CSS 的 .ps-dock-top{top:0} 决定，仅露下半球
+      el.classList.add('ps-dock-top');                   // 贴右边缘；top 由 inline 控制（默认 15% 处），仅露下半球
+      el.style.top = clampTop(launcherPos.top) + 'px';
     } else {
       el.classList.add('ps-dock-' + launcherPos.dock);
       el.style.top = clampTop(launcherPos.top) + 'px';
@@ -353,7 +361,7 @@
     }
   }
   function resetLauncherPos() {
-    launcherPos = { dock: 'top', top: LAUNCHER_TOP_DEF };
+    launcherPos = { dock: 'right', top: defaultLauncherTop() };
     saveLauncherPos();
     applyLauncherPos();
     toast('已重置触发条位置');
@@ -373,7 +381,7 @@
       const rec = {
         id: e.pointerId, sx: e.clientX, sy: e.clientY,
         cx: r.left + r.width / 2, cy: r.top + r.height / 2,   // 按下瞬间的元素中心
-        w: 44, h: 44, curLeft: r.left, curTop: r.top
+        w: LAUNCHER_SIZE, h: LAUNCHER_SIZE, curLeft: r.left, curTop: r.top
       };
       let dragging = false;
       try { el.setPointerCapture(e.pointerId); } catch (err) {}
@@ -436,8 +444,7 @@
 
   // 视口变化后把吸附位置夹回可视范围内
   window.addEventListener('resize', () => {
-    if (launcherPos.dock === 'top') return;
-    launcherPos.top = clampTop(launcherPos.top);
+    launcherPos.top = (launcherPos.dock === 'top') ? defaultLauncherTop() : clampTop(launcherPos.top);
     applyLauncherPos();
   });
 
@@ -1195,27 +1202,31 @@
    * 8. 样式
    * ============================================================ */
   GM_addStyle(`
-    /* 触发条：默认贴右上角（半球），hover 鼓成整球；拖拽后吸附左/右边缘变成竖立半球 */
+    /* 触发条：默认贴右上角、距顶 15%（半球），hover 鼓成整球；拖拽后吸附左/右边缘变成竖立半球 */
+    /* 尺寸单点控制在 JS 常量 LAUNCHER_SIZE（整球直径）：半球 = 直径 × 半径，圆角 = 半径 */
     #ps-launcher{position:fixed;z-index:2147483646;cursor:pointer;
       display:flex;align-items:center;justify-content:center;
       background:#4169e1;color:#fff;font:13px/1 "Microsoft YaHei",sans-serif;
       user-select:none;-webkit-user-select:none;-webkit-user-drag:none;touch-action:none;
-      box-shadow:0 2px 10px rgba(0,0,0,.25);overflow:hidden;white-space:nowrap;
+      box-shadow:0 1px 6px rgba(0,0,0,.28);overflow:hidden;white-space:nowrap;
       transition:width .22s ease,height .22s ease,border-radius .22s ease,
                  left .22s ease,right .22s ease,top .22s ease,box-shadow .2s ease;}
-    #ps-launcher:hover{box-shadow:0 6px 18px rgba(65,105,225,.45);}
-    #ps-launcher .ps-launch-ico{font-size:16px;line-height:1;}
-    /* 贴边半球：贴边方向两角直角，朝页面内侧两角圆化 22px */
-    .ps-dock-top{top:0;right:0;width:44px;height:22px;border-radius:0 0 22px 22px;}
-    #ps-dock-top:hover{height:44px;border-radius:22px;}
-    .ps-dock-left{top:0;left:0;width:22px;height:44px;border-radius:0 22px 22px 0;}
-    #ps-dock-left:hover{width:44px;border-radius:22px;}
-    .ps-dock-right{top:0;right:0;width:22px;height:44px;border-radius:22px 0 0 22px;}
-    #ps-dock-right:hover{width:44px;border-radius:22px;}
+    #ps-launcher:hover{box-shadow:0 4px 14px rgba(65,105,225,.45);}
+    #ps-launcher .ps-launch-ico{font-size:${Math.round(LAUNCHER_SIZE * 2 / 3)}px;line-height:1;
+      opacity:0;transition:opacity .18s ease;}
+    /* 半球只有半径那么高，图标留着会被裁成半截 → 静止只显示纯色凸起，hover / 整球时才淡入图标 */
+    #ps-launcher:hover .ps-launch-ico{opacity:1;}
+    /* 贴边半球：贴边方向两角直角，朝页面内侧两角圆化（半径） */
+    .ps-dock-top{top:0;right:0;width:${LAUNCHER_SIZE}px;height:${LAUNCHER_HALF}px;border-radius:0 0 ${LAUNCHER_HALF}px ${LAUNCHER_HALF}px;}
+    #ps-launcher.ps-dock-top:hover{height:${LAUNCHER_SIZE}px;border-radius:${LAUNCHER_HALF}px;}
+    .ps-dock-left{top:0;left:0;width:${LAUNCHER_HALF}px;height:${LAUNCHER_SIZE}px;border-radius:0 ${LAUNCHER_HALF}px ${LAUNCHER_HALF}px 0;}
+    #ps-launcher.ps-dock-left:hover{width:${LAUNCHER_SIZE}px;border-radius:${LAUNCHER_HALF}px;}
+    .ps-dock-right{top:0;right:0;width:${LAUNCHER_HALF}px;height:${LAUNCHER_SIZE}px;border-radius:${LAUNCHER_HALF}px 0 0 ${LAUNCHER_HALF}px;}
+    #ps-launcher.ps-dock-right:hover{width:${LAUNCHER_SIZE}px;border-radius:${LAUNCHER_HALF}px;}
     /* 拖拽中：自由跟随指针，不做位置过渡 */
-    .ps-floating{width:44px;height:44px;border-radius:22px;}
+    .ps-floating{width:${LAUNCHER_SIZE}px;height:${LAUNCHER_SIZE}px;border-radius:${LAUNCHER_HALF}px;}
     .ps-grabbing,.ps-dragging{transition:none;cursor:grabbing;}
-    .ps-dragging{box-shadow:0 10px 26px rgba(65,105,225,.5);}
+    .ps-dragging{box-shadow:0 6px 18px rgba(65,105,225,.5);}
     #ps-backdrop{position:fixed;inset:0;z-index:2147483647;background:rgba(0,0,0,.45);
       display:none;align-items:flex-start;justify-content:center;padding:24px 12px;overflow:auto;}
     #ps-backdrop.ps-open{display:flex;}
@@ -1356,11 +1367,12 @@
 
     /* ===== 移动端适配（窄屏 / 无悬停的触屏设备） ===== */
     @media (max-width:768px), (hover:none) {
-      /* 触发条：触屏无 hover，常驻展开成 44×44 整球保证点按区、避开刘海 */
+      /* 触发条：触屏无 hover，常驻 44×44 整球保证点按区（比桌面大一圈）、避开刘海 */
       #ps-launcher{top:env(safe-area-inset-top,0);width:44px;height:44px;border-radius:22px;}
       #ps-launcher.ps-dock-top{top:env(safe-area-inset-top,0);width:44px;height:44px;border-radius:22px;}
       #ps-launcher.ps-dock-left,#ps-launcher.ps-dock-right{width:44px;height:44px;border-radius:22px;}
       .ps-floating{width:44px;height:44px;border-radius:22px;}
+      #ps-launcher .ps-launch-ico{font-size:20px;opacity:1;}
       /* 弹窗占满屏宽并让出安全区，移除圆角做成全屏面板 */
       #ps-backdrop{padding:env(safe-area-inset-top,0px) 0 env(safe-area-inset-bottom,0px);}
       #ps-panel{width:100%;border-radius:0;
